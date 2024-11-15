@@ -79,7 +79,7 @@ const limiter = rateLimit({
   max: parseInt(process.env.RATE_LIMIT_MAX) || 100, // limit each IP to 100 requests per windowMs
   message: 'Too many requests from this IP, please try again later.',
 });
-app.use(limiter);
+// app.use(limiter);
 
 // Middleware for parsing JSON and URL-encoded data
 app.use(express.json());
