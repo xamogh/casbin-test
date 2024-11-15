@@ -1,4 +1,6 @@
-require('dotenv').config(); 
+// app.js
+
+require('dotenv').config(); // Load environment variables
 
 const express = require('express');
 const helmet = require('helmet');
@@ -6,11 +8,67 @@ const rateLimit = require('express-rate-limit');
 const { newEnforcer } = require('casbin');
 const { SequelizeAdapter } = require('casbin-sequelize-adapter');
 const winston = require('winston');
+const DailyRotateFile = require('winston-daily-rotate-file');
 const Joi = require('joi');
 const path = require('path');
+const morgan = require('morgan');
+const fs = require('fs');
 
 // Initialize Express app
 const app = express();
+
+// Ensure log directory exists
+const logDirectory = path.resolve(__dirname, process.env.LOG_DIR || 'logs');
+if (!fs.existsSync(logDirectory)) {
+  fs.mkdirSync(logDirectory);
+}
+
+// Initialize Winston logger with multiple transports
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }), // Include stack traces
+    winston.format.splat(),
+    winston.format.json()
+  ),
+  transports: [
+    // Console transport for real-time logging
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(), // Colorize output for console
+        winston.format.simple()
+      ),
+    }),
+    // Daily rotate file transport for combined logs
+    new DailyRotateFile({
+      filename: path.join(logDirectory, 'combined-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      zippedArchive: true,
+      maxSize: process.env.LOG_MAX_SIZE || '20m',
+      maxFiles: process.env.LOG_MAX_FILES || '14d',
+      level: 'info',
+    }),
+    // Daily rotate file transport for error logs
+    new DailyRotateFile({
+      filename: path.join(logDirectory, 'error-%DATE%.log'),
+      datePattern: 'YYYY-MM-DD',
+      zippedArchive: true,
+      maxSize: process.env.LOG_MAX_SIZE || '20m',
+      maxFiles: process.env.LOG_MAX_FILES || '30d',
+      level: 'error',
+    }),
+  ],
+  exitOnError: false, // Do not exit on handled exceptions
+});
+
+// Stream for Morgan to use Winston
+const morganStream = {
+  write: (message) => {
+    // Remove trailing newline
+    logger.info(message.trim());
+  },
+};
 
 // Middleware for security headers
 app.use(helmet());
@@ -19,27 +77,21 @@ app.use(helmet());
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000, // 1 minute
   max: parseInt(process.env.RATE_LIMIT_MAX) || 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  message: 'Too many requests from this IP, please try again later.',
 });
-// app.use(limiter);
+app.use(limiter);
 
 // Middleware for parsing JSON and URL-encoded data
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Initialize Winston logger
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.errors({ stack: true }), // to include stack trace
-    winston.format.splat(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ],
-});
+// Middleware for HTTP request logging using Morgan and Winston
+app.use(
+  morgan('combined', {
+    stream: morganStream,
+    skip: (req, res) => res.statusCode < 400, // Log only errors
+  })
+);
 
 // Initialize Casbin enforcer
 let enforcer;
@@ -52,7 +104,7 @@ const initializeEnforcer = async () => {
       database: process.env.DB_NAME,
       dialect: process.env.DB_DIALECT,
       host: process.env.DB_HOST,
-      logging: msg => logger.debug(msg), // Integrate Sequelize logging with Winston
+      logging: (msg) => logger.debug(msg), // Integrate Sequelize logging with Winston
     });
     enforcer = await newEnforcer(
       path.resolve(process.env.ENFORCER_MODEL_PATH),
@@ -61,7 +113,7 @@ const initializeEnforcer = async () => {
     await enforcer.loadPolicy();
     logger.info('Enforcer initialized.');
   } catch (err) {
-    logger.error('Failed to initialize enforcer: %o', err);
+    logger.error('Failed to initialize enforcer:', err);
     process.exit(1); // Exit process if enforcer fails to initialize
   }
 };
@@ -105,10 +157,14 @@ app.post('/policy', async (req, res, next) => {
     }
     const { sub, obj, act } = value;
     const added = await enforcer.addPolicy(sub, obj, act);
-    logger.info('Policy added: %o', value);
+    if (added) {
+      logger.info('Policy added: %o', value);
+    } else {
+      logger.warn('Policy already exists: %o', value);
+    }
     res.status(200).json({ added });
   } catch (err) {
-    logger.error('Failed to add policy: %o', err);
+    logger.error('Failed to add policy:', err);
     next(err);
   }
 });
@@ -123,10 +179,14 @@ app.post('/policies', async (req, res, next) => {
     }
     const { policies } = value;
     const added = await enforcer.addPolicies(policies);
-    logger.info('Policies added: %o', policies);
-    res.status(200).json({ added });
+    if (added.length > 0) {
+      logger.info('Policies added: %o', added);
+    } else {
+      logger.warn('No new policies were added.');
+    }
+    res.status(200).json({ added: added.length });
   } catch (err) {
-    logger.error('Failed to add policies: %o', err);
+    logger.error('Failed to add policies:', err);
     next(err);
   }
 });
@@ -141,10 +201,14 @@ app.delete('/policy', async (req, res, next) => {
     }
     const { sub, obj, act } = value;
     const removed = await enforcer.removePolicy(sub, obj, act);
-    logger.info('Policy removed: %o', value);
+    if (removed) {
+      logger.info('Policy removed: %o', value);
+    } else {
+      logger.warn('Policy not found for removal: %o', value);
+    }
     res.status(200).json({ removed });
   } catch (err) {
-    logger.error('Failed to remove policy: %o', err);
+    logger.error('Failed to remove policy:', err);
     next(err);
   }
 });
@@ -158,11 +222,23 @@ app.delete('/policies', async (req, res, next) => {
       return res.status(400).json({ error: error.details[0].message });
     }
     const { policies } = value;
-    const removed = await enforcer.removePolicies(policies);
-    logger.info('Policies removed: %o', policies);
-    res.status(200).json({ removed });
+    const removedPolicies = [];
+    for (const policy of policies) {
+      const removed = await enforcer.removePolicy(
+        policy.sub,
+        policy.obj,
+        policy.act
+      );
+      if (removed) {
+        removedPolicies.push(policy);
+        logger.info('Policy removed: %o', policy);
+      } else {
+        logger.warn('Policy not found for removal: %o', policy);
+      }
+    }
+    res.status(200).json({ removed: removedPolicies.length });
   } catch (err) {
-    logger.error('Failed to remove policies: %o', err);
+    logger.error('Failed to remove policies:', err);
     next(err);
   }
 });
@@ -176,15 +252,19 @@ app.get('/policy', async (req, res, next) => {
       return res.status(400).json({ error: error.details[0].message });
     }
     const { fieldIndex, sub, obj, act } = value;
-    const filterValues = [sub, obj, act].filter(v => v !== undefined);
+    const filterValues = [sub, obj, act].filter((v) => v !== undefined);
     const policies = await enforcer.getFilteredPolicy(
       Number(fieldIndex),
       ...filterValues
     );
-    logger.info('Filtered policies retrieved: fieldIndex=%d, filters=%o', fieldIndex, filterValues);
+    logger.info(
+      'Filtered policies retrieved: fieldIndex=%d, filters=%o',
+      fieldIndex,
+      filterValues
+    );
     res.status(200).json({ policies });
   } catch (err) {
-    logger.error('Failed to get filtered policy: %o', err);
+    logger.error('Failed to get filtered policy:', err);
     next(err);
   }
 });
@@ -198,15 +278,19 @@ app.delete('/filtered_policy', async (req, res, next) => {
       return res.status(400).json({ error: error.details[0].message });
     }
     const { fieldIndex, sub, obj, act } = value;
-    const filterValues = [sub, obj, act].filter(v => v !== undefined);
+    const filterValues = [sub, obj, act].filter((v) => v !== undefined);
     const removed = await enforcer.removeFilteredPolicy(
       Number(fieldIndex),
       ...filterValues
     );
-    logger.info('Filtered policy removed: fieldIndex=%d, filters=%o', fieldIndex, filterValues);
+    logger.info(
+      'Filtered policy removed: fieldIndex=%d, filters=%o',
+      fieldIndex,
+      filterValues
+    );
     res.status(200).json({ removed });
   } catch (err) {
-    logger.error('Failed to remove filtered policy: %o', err);
+    logger.error('Failed to remove filtered policy:', err);
     next(err);
   }
 });
@@ -224,9 +308,14 @@ app.post('/enforce', async (req, res, next) => {
     logger.info('Policy enforced: %o, allowed=%s', value, allowed);
     res.status(200).json({ allowed });
   } catch (err) {
-    logger.error('Failed to enforce policy: %o', err);
+    logger.error('Failed to enforce policy:', err);
     next(err);
   }
+});
+
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
 
 // Centralized Error Handling Middleware
@@ -243,12 +332,12 @@ app.use((req, res) => {
 // Handle unhandled promise rejections and uncaught exceptions
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at: %o, reason: %o', promise, reason);
-  // You might decide to shut down the process here
+  // Optionally, notify developers or perform cleanup
 });
 
 process.on('uncaughtException', (err) => {
   logger.error('Uncaught Exception: %o', err);
-  process.exit(1); // Mandatory (as per the Node.js docs)
+  process.exit(1); // Exit to allow process manager to restart the app
 });
 
 // Start the server after initializing the enforcer

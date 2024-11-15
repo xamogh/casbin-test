@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "/Users/amoghrijal/casbin-microservice/logs/.415447a0977fe03ccb5538fae988cf44621cb246-audit.json",
+    "files": [
+        {
+            "date": 1731655142773,
+            "name": "/Users/amoghrijal/casbin-microservice/logs/error-2024-11-15.log",
+            "hash": "b446d2d205a6541f4a1e167c53f3420041e25bf99f7821b9099d3a5960d0205b"
+        }
+    ],
+    "hashType": "sha256"
+}
