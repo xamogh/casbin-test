@@ -1,0 +1,20 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/home/amogh/casbin-test/logs/.fd6aa49767e0f94f4cd2ff93373a46aad7d8d680-audit.json",
+    "files": [
+        {
+            "date": 1732037837420,
+            "name": "/home/amogh/casbin-test/logs/combined-2024-11-19.log",
+            "hash": "319de306e7a11b18760532b8e99f2e2ab4dca2ab17df85c7c0b2be285636ea80"
+        },
+        {
+            "date": 1732040107643,
+            "name": "/home/amogh/casbin-test/logs/combined-2024-11-20.log",
+            "hash": "1aacd89f7ab7f9a5f00e9ac0ce610a65b4412a7c70dbb754f16c99655281ebf6"
+        }
+    ],
+    "hashType": "sha256"
+}

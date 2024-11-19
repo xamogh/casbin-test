@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "/home/amogh/casbin-test/logs/.70610c29fc0cea414c3534e1ed88928d7ded4bd8-audit.json",
+    "files": [
+        {
+            "date": 1732037837421,
+            "name": "/home/amogh/casbin-test/logs/error-2024-11-19.log",
+            "hash": "6456b6c39281f94e3f6c1a610f31d98b0a951cb6b3a165ab4a41afdbe4a6a98c"
+        }
+    ],
+    "hashType": "sha256"
+}
